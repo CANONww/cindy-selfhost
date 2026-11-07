@@ -64,6 +64,8 @@ import { chatGroupMemberName as memberName, chatGroupOwnerName, botGroupExecutio
 import { createThreadProjection, isShareableThreadReply, threadPreviewAttachments, threadPreviewText } from './chatServerThreads.js';
 import { companionSnapshot, registerCompanionHomes } from '../companion-cloud/homes.js';
 import { startCompanionCloud, type CompanionCloudRuntime } from '../companion-cloud/runtime.js';
+import { isLocalMode } from '../companion-cloud/localTransport.js';
+import { createLocalCompanionApi } from '../companion-cloud/localCompanionApi.js';
 import { DIRECT_ROOM_COMPLETION, deliverDirectRoomMessage, directRoomClientId } from '../companion-cloud/directRoom.js';
 import { createChatHistory, type ChatHistory } from '@cindy/maker-shared/chat-history';
 import { createOthersReadOverlay, isReadByOthers, parseReadReceiptFrame, projectMessageReaders } from '@cindy/maker-shared/chat-read-receipts';
@@ -701,6 +703,11 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     authRefresh = attempt;
     return attempt.promise;
   }
+  /**
+   * 自建模式（默认）：CompanionApi 打到本机房间服务；官方模式沿用聊天服务的实现。
+   * 只换传输，不动上层逻辑，随时可切回（<userData>/selfhost.json 或 XDT_SELFHOST=official）。
+   */
+  const companionTransport = (): typeof api => (isLocalMode() ? createLocalCompanionApi() : api);
   function api<T>(route: string, method = 'GET', data?: unknown, actorId?: string, retried = false, successStatus?: number, admit?: () => void): Promise<T> {
     if (!current()) return Promise.reject(new Error('OWNER_CHANGED'));
     try { admit?.(); } catch (error) { return Promise.reject(error); }
@@ -1074,7 +1081,7 @@ function createChatServer(local: BotGroupChatService, deps: BotGroupChatServiceD
     const self = selfDeviceId;
     if (companion && companionSelf !== self) { companion.dispose(); companion = undefined; }
     companionSelf = self;
-    companion ??= startCompanionCloud({ api, backgroundIdentity: { api: workApi, isDeferred: error => error instanceof WorkRequestDeferred },
+    companion ??= startCompanionCloud({ api: companionTransport(), backgroundIdentity: { api: workApi, isDeferred: error => error instanceof WorkRequestDeferred },
       host, endpoint: config.baseUrl, humanActorId: selfId, selfDeviceId: self, current, log: deps.log,
       transcript: deps.chatHistoryStore ? async (roomId, actorId, refresh) => {
         // Keep message-time ordering for imported history, but reuse covered pages after delta sync.
